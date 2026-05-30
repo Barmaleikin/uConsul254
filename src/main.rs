@@ -39,7 +39,7 @@ impl LineWidthMode {
     }
 }
 
-n visible_chars_per_line(mode: LineWidthMode) -> usize {
+fn visible_chars_per_line(mode: LineWidthMode) -> usize {
     mode.visible_chars()
 }
 
@@ -427,7 +427,6 @@ impl<Message> canvas::Program<Message> for TypewriterCanvas {
         let char_w = bounds.width / (LEFT_MARGIN as f32 + visible_chars + RIGHT_MARGIN as f32);
         let char_h = char_w * CHAR_RATIO;
 
-        // Фон листа
         frame.fill_rectangle(
             Point::new(0.0, 0.0),
             Size::new(bounds.width, bounds.height),
@@ -437,7 +436,6 @@ impl<Message> canvas::Program<Message> for TypewriterCanvas {
         let status_line_width_chars = state.visible_chars() + 2;
         let status_line_width = status_line_width_chars as f32 * char_w;
         let status_x = (bounds.width - status_line_width) / 2.0;
-        let field_top = 0.0;
         let field_bottom = TOP_MARGIN as f32 * char_h;
         let field_center_y = field_bottom / 2.0;
         let status_char_h = char_h * 0.8;
@@ -615,9 +613,7 @@ impl<Message> canvas::Program<Message> for TypewriterCanvas {
             let help_char_h = char_h * 0.75;
             let help_font_size = iced::Pixels(help_char_h * 0.75);
             let line_spacing = help_char_h * 1.15;
-            // Отступ от верхнего края подложки
             let start_y = help_y + help_char_h * 1.0;
-            // Отступ слева: на ширину левого поля + небольшой отступ
             let text_x = LEFT_MARGIN as f32 * char_w + char_w * 0.5;
 
             for (i, line) in help_lines.iter().enumerate() {
