@@ -5,6 +5,8 @@ Supports two colour typing and mixing. Does not save hat you type, text will be 
 
 Build for Ubuntu, uses iced lib.
 
+![uConsul 254 screenshot](screenshot.png)
+
 1. Start typing from bottom line.
 2. Use «Enter» to Line feed and Carriage return, or «Alt»+«Enter» for Carriage return (back to first position).
 3. Use double «Alt» tap to change ribbon colour from default black to red and back.
