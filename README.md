@@ -19,7 +19,7 @@ Build for Ubuntu, uses iced lib.
 
 ## Limitations
 - Single page
-- Does not save hat you type, text will be lost on close.
+- Does not save what you type, text will be lost on close.
 - Space bar just skips space, doesn't remove typed symbols. Or highlights typed symbol at current position (a little fantasy feature, never existed in real device).
 
 ## Screenshot
