@@ -1,7 +1,6 @@
 use iced::keyboard;
 use iced::widget::canvas;
 use iced::{Color, Element, Length, Point, Rectangle, Renderer, Size, Subscription, Theme};
-
 use std::env;
 use std::fs;
 use std::sync::OnceLock;
@@ -11,6 +10,7 @@ const TOTAL_CHARS_PER_LINE: usize = 80;
 const TOTAL_LINES: usize = 56;
 const CHAR_RATIO: f32 = 2.0;
 const A4_RATIO: f32 = 297.0 / 210.0;
+
 const MAX_LAYERS: usize = 3;
 
 const LEFT_MARGIN: usize = 6;
@@ -29,13 +29,6 @@ ABCDEFGHIJKLMNOPQRSTUVWXYZ\
 const COLOR_BLACK: Color = Color::from_rgb(0.0, 0.0, 0.0);
 const COLOR_RED: Color = Color::from_rgb(0.8, 0.1, 0.1);
 
-//
-// Текст, загруженный из файла командной строки.
-//
-// TypewriterState создаётся внутри canvas::Program, поэтому обычный
-// параметр конструктора сюда передать нельзя. OnceLock позволяет
-// безопасно передать исходный текст до запуска iced.
-//
 static INITIAL_INPUT: OnceLock<String> = OnceLock::new();
 
 fn expand_file_commands(text: &str) -> String {
@@ -46,7 +39,6 @@ fn expand_file_commands(text: &str) -> String {
         .replace("{TAPE}", "\x1b]13m")
         .replace("{CLEAR}", "\x1b[2J")
 }
-
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LineWidthMode {
@@ -75,6 +67,31 @@ impl LineWidthMode {
 
 fn visible_chars_per_line(mode: LineWidthMode) -> usize {
     mode.visible_chars()
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LineSpacing {
+    Single,
+    OneAndHalf,
+    Double,
+}
+
+impl LineSpacing {
+    fn multiplier(self) -> f32 {
+        match self {
+            LineSpacing::Single => 1.0,
+            LineSpacing::OneAndHalf => 1.5,
+            LineSpacing::Double => 2.0,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            LineSpacing::Single => "1,0",
+            LineSpacing::OneAndHalf => "1,5",
+            LineSpacing::Double => "2,0",
+        }
+    }
 }
 
 fn mix_colors(colors: &[Color]) -> Color {
@@ -149,6 +166,7 @@ struct TypewriterState {
     last_alt_press: Option<Instant>,
     allowed_chars: std::collections::HashSet<char>,
     line_width_mode: LineWidthMode,
+    line_spacing: LineSpacing,
     show_help: bool,
 }
 
@@ -169,6 +187,7 @@ impl Default for TypewriterState {
             last_alt_press: None,
             allowed_chars,
             line_width_mode: mode,
+            line_spacing: LineSpacing::Single,
             show_help: false,
         };
 
@@ -246,26 +265,17 @@ impl TypewriterState {
         }
     }
 
-    //
-    // Обработка обычного текста и управляющих команд файла.
-    //
     fn type_text(&mut self, text: &str) {
         let bytes = text.as_bytes();
         let mut index = 0;
 
         while index < bytes.len() {
-            //
-            // ESC является началом управляющей последовательности.
-            //
             if bytes[index] == 0x1b {
-                if let Some(consumed) =
-                    self.handle_file_escape(&bytes[index..])
-                {
+                if let Some(consumed) = self.handle_file_escape(&bytes[index..]) {
                     index += consumed;
                     continue;
                 }
 
-                // Неизвестная управляющая последовательность.
                 index += 1;
                 continue;
             }
@@ -283,10 +293,6 @@ impl TypewriterState {
                     self.enter();
                 }
 
-                //
-                // Для CRLF обработка выполняется по символу '\n'.
-                // Отдельный CR трактуем как возврат каретки.
-                //
                 '\r' => {
                     let is_crlf = index + char_len < bytes.len()
                         && bytes[index + char_len] == b'\n';
@@ -306,51 +312,36 @@ impl TypewriterState {
         }
     }
 
-    //
-    // Обработка управляющих последовательностей,
-    // начинающихся с ESC.
-    //
     fn handle_file_escape(&mut self, data: &[u8]) -> Option<usize> {
         if data.len() < 2 || data[0] != 0x1b {
             return None;
         }
 
-        //
-        // Длинные последовательности должны проверяться
-        // раньше коротких.
-        //
-
-        // Alt + ArrowLeft
         if data.starts_with(b"\x1b[1;3D") {
             self.move_left();
             return Some(6);
         }
 
-        // Alt + ArrowRight
         if data.starts_with(b"\x1b[1;3C") {
             self.move_right();
             return Some(6);
         }
 
-        // Переключение цвета ленты
         if data.starts_with(b"\x1b]13m") {
             self.toggle_tape_color();
             return Some(5);
         }
 
-        // Очистка бумаги
         if data.starts_with(b"\x1b[2J") {
             self.clear_text();
             return Some(4);
         }
 
-        // ArrowLeft
         if data.starts_with(b"\x1b[D") {
             self.move_left();
             return Some(3);
         }
 
-        // ArrowRight
         if data.starts_with(b"\x1b[C") {
             self.move_right();
             return Some(3);
@@ -399,8 +390,7 @@ impl TypewriterState {
         let now = Instant::now();
 
         if let Some(last) = self.last_alt_press {
-            let elapsed_ms =
-                now.duration_since(last).as_millis() as u64;
+            let elapsed_ms = now.duration_since(last).as_millis() as u64;
 
             if elapsed_ms < ALT_DOUBLE_TAP_MS {
                 self.toggle_tape_color();
@@ -442,15 +432,19 @@ impl TypewriterState {
         self.cursor_col = self.cursor_col.min(new_visible);
     }
 
+    fn set_line_spacing(&mut self, spacing: LineSpacing) {
+        self.line_spacing = spacing;
+    }
+
     fn toggle_help(&mut self) {
         self.show_help = !self.show_help;
     }
 }
 
-
 struct TypewriterCanvas;
 
 const HELP_TEXT: &str = r#"СПРАВКА — Пишущая машинка Consul 254
+
 Управление:
 A-Z, А-Я, 0-9, знаки препинания — печать символа
 Пробел — пробел
@@ -458,11 +452,16 @@ Enter — перевод строки
 Alt + Enter — возврат каретки
 ← → — сдвиг каретки
 Alt (двойное нажатие) — смена цвета ленты
+
 Ctrl+1 / Ctrl+2 / Ctrl+3 — ширина строки: 68 / 80 / 106
+Ctrl+4 — межстрочный интервал: 1,0
+Ctrl+5 — межстрочный интервал: 1,5
+Ctrl+6 — межстрочный интервал: 2,0
+
 F1 — показать/скрыть эту справку
 
 Особенности:
-• Ошибочно Набранный Символ Остаётся На Бумаге
+• Ошибочно набранный символ остаётся на бумаге
 • Повторный удар по той же позиции перекрывает символ
 • Максимум 3 наложения на одну позицию
 "#;
@@ -518,6 +517,21 @@ impl<Message> canvas::Program<Message> for TypewriterCanvas {
 
                             "3" => {
                                 state.set_line_width_mode(LineWidthMode::Mode106);
+                                return Some(canvas::Action::request_redraw());
+                            }
+
+                            "4" => {
+                                state.set_line_spacing(LineSpacing::Single);
+                                return Some(canvas::Action::request_redraw());
+                            }
+
+                            "5" => {
+                                state.set_line_spacing(LineSpacing::OneAndHalf);
+                                return Some(canvas::Action::request_redraw());
+                            }
+
+                            "6" => {
+                                state.set_line_spacing(LineSpacing::Double);
                                 return Some(canvas::Action::request_redraw());
                             }
 
@@ -590,6 +604,8 @@ impl<Message> canvas::Program<Message> for TypewriterCanvas {
             / (LEFT_MARGIN as f32 + visible_chars + RIGHT_MARGIN as f32);
         let char_h = char_w * CHAR_RATIO;
 
+        let line_step = char_h * state.line_spacing.multiplier();
+
         frame.fill_rectangle(
             Point::new(0.0, 0.0),
             Size::new(bounds.width, bounds.height),
@@ -606,13 +622,14 @@ impl<Message> canvas::Program<Message> for TypewriterCanvas {
         let status_char_h = char_h * 0.8;
         let status_font_size = iced::Pixels(status_char_h);
         let line_gap = status_char_h * 0.3;
+
         let total_status_height = status_char_h * 2.0 + line_gap;
 
         let status_start_y = field_center_y
             - total_status_height / 2.0
             + status_char_h / 2.0;
 
-        let status_top_left = canvas::Text {
+        frame.fill_text(canvas::Text {
             content: "«CONSUL 254»".to_string(),
             position: Point::new(status_x, status_start_y),
             color: Color::from_rgb(0.3, 0.3, 0.3),
@@ -621,14 +638,13 @@ impl<Message> canvas::Program<Message> for TypewriterCanvas {
             align_x: iced::widget::text::Alignment::Left,
             align_y: iced::alignment::Vertical::Center,
             ..canvas::Text::default()
-        };
+        });
 
-        frame.fill_text(status_top_left);
-
-        let status_top_right = canvas::Text {
+        frame.fill_text(canvas::Text {
             content: format!(
-                "РЕЖИМ: {} СИМВОЛОВ, ИНТЕРВАЛ ОДИНАРНЫЙ, ЦВЕТ ЛЕНТЫ {}",
+                "РЕЖИМ: {} СИМВОЛОВ, ИНТЕРВАЛ {}, ЦВЕТ ЛЕНТЫ {}",
                 state.line_width_mode.label(),
+                state.line_spacing.label(),
                 state.tape_color_name()
             ),
             position: Point::new(
@@ -641,9 +657,7 @@ impl<Message> canvas::Program<Message> for TypewriterCanvas {
             align_x: iced::widget::text::Alignment::Right,
             align_y: iced::alignment::Vertical::Center,
             ..canvas::Text::default()
-        };
-
-        frame.fill_text(status_top_right);
+        });
 
         let underline_y = status_start_y + status_char_h + line_gap;
         let line_thickness = status_char_h * 0.12;
@@ -660,8 +674,7 @@ impl<Message> canvas::Program<Message> for TypewriterCanvas {
         let lines_to_show = state.lines.len().min(VISIBLE_LINES);
 
         for display_idx in 0..lines_to_show {
-            let line_idx =
-                state.lines.len().saturating_sub(1 + display_idx);
+            let line_idx = state.lines.len().saturating_sub(1 + display_idx);
 
             let Some(line) = state.lines.get(line_idx) else {
                 continue;
@@ -669,7 +682,7 @@ impl<Message> canvas::Program<Message> for TypewriterCanvas {
 
             let y = bounds.height
                 - ((display_idx + BOTTOM_MARGIN) as f32 + 1.0)
-                    * char_h;
+                    * line_step;
 
             for (col, cell) in line.iter().enumerate() {
                 if cell.is_empty() {
@@ -700,13 +713,12 @@ impl<Message> canvas::Program<Message> for TypewriterCanvas {
                     }
 
                     2 => {
-                        for (layer_idx, layer) in
-                            cell.layers.iter().enumerate()
-                        {
+                        for (layer_idx, layer) in cell.layers.iter().enumerate() {
                             let offset_x =
                                 (layer_idx as f32 * 0.5 - 0.25)
                                     * char_w
                                     * 0.04;
+
                             let offset_y =
                                 (layer_idx as f32 * 0.5 - 0.25)
                                     * char_h
@@ -721,10 +733,8 @@ impl<Message> canvas::Program<Message> for TypewriterCanvas {
                                 color: color_with_alpha(layer.color, 0.75),
                                 size: iced::Pixels(char_h * 0.8),
                                 font: iced::Font::MONOSPACE,
-                                align_x:
-                                    iced::widget::text::Alignment::Center,
-                                align_y:
-                                    iced::alignment::Vertical::Center,
+                                align_x: iced::widget::text::Alignment::Center,
+                                align_y: iced::alignment::Vertical::Center,
                                 ..canvas::Text::default()
                             });
                         }
@@ -749,6 +759,7 @@ impl<Message> canvas::Program<Message> for TypewriterCanvas {
                                 (layer_idx as f32 - 1.0)
                                     * char_w
                                     * 0.03;
+
                             let offset_y =
                                 (layer_idx as f32 - 1.0)
                                     * char_h
@@ -763,10 +774,8 @@ impl<Message> canvas::Program<Message> for TypewriterCanvas {
                                 color: mixed,
                                 size: iced::Pixels(char_h * 0.8),
                                 font: iced::Font::MONOSPACE,
-                                align_x:
-                                    iced::widget::text::Alignment::Center,
-                                align_y:
-                                    iced::alignment::Vertical::Center,
+                                align_x: iced::widget::text::Alignment::Center,
+                                align_y: iced::alignment::Vertical::Center,
                                 ..canvas::Text::default()
                             });
                         }
@@ -778,6 +787,7 @@ impl<Message> canvas::Program<Message> for TypewriterCanvas {
                                 ((layer_idx % 3) as f32 - 1.0)
                                     * char_w
                                     * 0.03;
+
                             let offset_y =
                                 ((layer_idx % 3) as f32 - 1.0)
                                     * char_h
@@ -792,10 +802,8 @@ impl<Message> canvas::Program<Message> for TypewriterCanvas {
                                 color: mixed,
                                 size: iced::Pixels(char_h * 0.8),
                                 font: iced::Font::MONOSPACE,
-                                align_x:
-                                    iced::widget::text::Alignment::Center,
-                                align_y:
-                                    iced::alignment::Vertical::Center,
+                                align_x: iced::widget::text::Alignment::Center,
+                                align_y: iced::alignment::Vertical::Center,
                                 ..canvas::Text::default()
                             });
                         }
@@ -809,8 +817,10 @@ impl<Message> canvas::Program<Message> for TypewriterCanvas {
         {
             let cursor_x =
                 (LEFT_MARGIN + state.cursor_col) as f32 * char_w;
+
             let cursor_y =
-                bounds.height - (BOTTOM_MARGIN as f32 + 1.0) * char_h;
+                bounds.height
+                    - (BOTTOM_MARGIN as f32 + 1.0) * line_step;
 
             frame.fill_rectangle(
                 Point::new(cursor_x, cursor_y),
@@ -833,10 +843,12 @@ impl<Message> canvas::Program<Message> for TypewriterCanvas {
             );
 
             let help_lines: Vec<&str> = HELP_TEXT.lines().collect();
+
             let help_char_h = char_h * 0.75;
             let help_font_size = iced::Pixels(help_char_h * 0.75);
             let line_spacing = help_char_h * 1.15;
             let start_y = help_y + help_char_h;
+
             let text_x =
                 LEFT_MARGIN as f32 * char_w + char_w * 0.5;
 
