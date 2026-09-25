@@ -1,6 +1,6 @@
 [package]
 name = "uConsul-254_typewriter"
-version = "0.1.10"
+version = "0.1.11"
 edition = "2024"
 
 [dependencies]
