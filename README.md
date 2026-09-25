@@ -20,11 +20,12 @@ It supports manual keyboard input as well as text-file playback. A file passed a
 9. Overlay up to three symbols at the same position.
 10. Mix black and red overlays to produce different visual combinations.
 11. Use `Ctrl` + `1`, `Ctrl` + `2` or `Ctrl` + `3` to change the line width.
-12. Press `F1` to show or hide the built-in help.
-13. Load and process a UTF-8 text file at application startup.
-14. Move the cursor backwards and forwards while processing a text file.
-15. Change the ribbon colour while processing a text file.
-16. Clear the printed page from a text file command.
+12. Use `Ctrl` + `4`, `Ctrl` + `5` or `Ctrl` + `6` to change the line spacing.
+13. Press `F1` to show or hide the built-in help.
+14. Load and process a UTF-8 text file at application startup.
+15. Move the cursor backwards and forwards while processing a text file.
+16. Change the ribbon colour while processing a text file.
+17. Clear the printed page from a text file command.
 
 
 ## Building
@@ -121,6 +122,9 @@ Repeated {LEFT} commands move the carriage over already printed text. Printing a
 | `Ctrl` + `1` | Select 68-character line mode |
 | `Ctrl` + `2` | Select 80-character line mode |
 | `Ctrl` + `3` | Select 106-character line mode |
+| `Ctrl` + `4` | Select single line spacing (`1.0`) |
+| `Ctrl` + `5` | Select one-and-a-half line spacing (`1.5`) |
+| `Ctrl` + `6` | Select double line spacing (`2.0`) |
 | `F1` | Show or hide help |
 
 
@@ -195,6 +199,7 @@ The following features were available:
 - Visual representation of the paper, margins, carriage and typed characters.
 - Standalone operation without network access or external services.
 
+
 ### Version 0.1.10
 
 Compared with version `0.1.0`, the following features and improvements have been added:
@@ -220,3 +225,15 @@ Compared with version `0.1.0`, the following features and improvements have been
 - Fixed the elapsed-time comparison used for detecting a double `Alt` press.
 - Improved the built-in help information.
 - Documented the supported character set and overlay-printing behaviour.
+
+
+### Version 0.10.11
+
+Compared with version `0.1.10`, the following feature has been added:
+
+- Added keyboard control for line spacing.
+- Added single line spacing (`1.0`) using `Ctrl` + `4`.
+- Added one-and-a-half line spacing (`1.5`) using `Ctrl` + `5`.
+- Added double line spacing (`2.0`) using `Ctrl` + `6`.
+- Single line spacing (`1.0`) is selected by default.
+- Updated the built-in help screen with the new keyboard shortcuts.
