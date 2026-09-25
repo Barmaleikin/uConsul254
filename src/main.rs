@@ -38,6 +38,16 @@ const COLOR_RED: Color = Color::from_rgb(0.8, 0.1, 0.1);
 //
 static INITIAL_INPUT: OnceLock<String> = OnceLock::new();
 
+fn expand_file_commands(text: &str) -> String {
+    text.replace("{LEFT}", "\x1b[D")
+        .replace("{RIGHT}", "\x1b[C")
+        .replace("{ALT_LEFT}", "\x1b[1;3D")
+        .replace("{ALT_RIGHT}", "\x1b[1;3C")
+        .replace("{TAPE}", "\x1b]13m")
+        .replace("{CLEAR}", "\x1b[2J")
+}
+
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LineWidthMode {
     Mode68,
@@ -162,9 +172,6 @@ impl Default for TypewriterState {
             show_help: false,
         };
 
-        //
-        // Загружаем файл только после создания состояния пишущей машинки.
-        //
         if let Some(text) = INITIAL_INPUT.get() {
             state.type_text(text);
         }
@@ -203,9 +210,9 @@ impl TypewriterState {
 
     fn tape_color_name(&self) -> &'static str {
         if self.alt_color_inverted {
-            "красный"
+            "КРАСНЫЙ"
         } else {
-            "чёрный"
+            "ЧЁРНЫЙ"
         }
     }
 
@@ -240,22 +247,116 @@ impl TypewriterState {
     }
 
     //
-    // Обработка текста из файла как последовательности клавиатурных вводов.
+    // Обработка обычного текста и управляющих команд файла.
     //
     fn type_text(&mut self, text: &str) {
-        for ch in text.chars() {
-            match ch {
-                '\n' => self.enter(),
+        let bytes = text.as_bytes();
+        let mut index = 0;
 
-                // Для CRLF оставляем обработку только '\n'.
-                '\r' => {}
+        while index < bytes.len() {
+            //
+            // ESC является началом управляющей последовательности.
+            //
+            if bytes[index] == 0x1b {
+                if let Some(consumed) =
+                    self.handle_file_escape(&bytes[index..])
+                {
+                    index += consumed;
+                    continue;
+                }
+
+                // Неизвестная управляющая последовательность.
+                index += 1;
+                continue;
+            }
+
+            let rest = &text[index..];
+
+            let Some(ch) = rest.chars().next() else {
+                break;
+            };
+
+            let char_len = ch.len_utf8();
+
+            match ch {
+                '\n' => {
+                    self.enter();
+                }
+
+                //
+                // Для CRLF обработка выполняется по символу '\n'.
+                // Отдельный CR трактуем как возврат каретки.
+                //
+                '\r' => {
+                    let is_crlf = index + char_len < bytes.len()
+                        && bytes[index + char_len] == b'\n';
+
+                    if !is_crlf {
+                        self.carriage_return();
+                    }
+                }
 
                 _ => {
                     let color = self.get_color(false);
                     self.type_char(ch, color);
                 }
             }
+
+            index += char_len;
         }
+    }
+
+    //
+    // Обработка управляющих последовательностей,
+    // начинающихся с ESC.
+    //
+    fn handle_file_escape(&mut self, data: &[u8]) -> Option<usize> {
+        if data.len() < 2 || data[0] != 0x1b {
+            return None;
+        }
+
+        //
+        // Длинные последовательности должны проверяться
+        // раньше коротких.
+        //
+
+        // Alt + ArrowLeft
+        if data.starts_with(b"\x1b[1;3D") {
+            self.move_left();
+            return Some(6);
+        }
+
+        // Alt + ArrowRight
+        if data.starts_with(b"\x1b[1;3C") {
+            self.move_right();
+            return Some(6);
+        }
+
+        // Переключение цвета ленты
+        if data.starts_with(b"\x1b]13m") {
+            self.toggle_tape_color();
+            return Some(5);
+        }
+
+        // Очистка бумаги
+        if data.starts_with(b"\x1b[2J") {
+            self.clear_text();
+            return Some(4);
+        }
+
+        // ArrowLeft
+        if data.starts_with(b"\x1b[D") {
+            self.move_left();
+            return Some(3);
+        }
+
+        // ArrowRight
+        if data.starts_with(b"\x1b[C") {
+            self.move_right();
+            return Some(3);
+        }
+
+        None
     }
 
     fn enter(&mut self) {
@@ -283,14 +384,26 @@ impl TypewriterState {
         }
     }
 
+    fn toggle_tape_color(&mut self) {
+        self.alt_color_inverted = !self.alt_color_inverted;
+    }
+
+    fn clear_text(&mut self) {
+        self.lines.clear();
+        self.lines
+            .push(create_empty_line(self.visible_chars()));
+        self.cursor_col = 0;
+    }
+
     fn handle_alt_press(&mut self) {
         let now = Instant::now();
 
         if let Some(last) = self.last_alt_press {
-            let elapsed_ms = now.duration_since(last).as_millis() as u64;
+            let elapsed_ms =
+                now.duration_since(last).as_millis() as u64;
 
             if elapsed_ms < ALT_DOUBLE_TAP_MS {
-                self.alt_color_inverted = !self.alt_color_inverted;
+                self.toggle_tape_color();
                 self.last_alt_press = None;
                 return;
             }
@@ -307,6 +420,7 @@ impl TypewriterState {
         self.line_width_mode = mode;
 
         let new_visible = self.visible_chars();
+
         let mut new_lines =
             Vec::with_capacity(self.lines.len().min(VISIBLE_LINES));
 
@@ -333,6 +447,7 @@ impl TypewriterState {
     }
 }
 
+
 struct TypewriterCanvas;
 
 const HELP_TEXT: &str = r#"СПРАВКА — Пишущая машинка Consul 254
@@ -347,7 +462,7 @@ Ctrl+1 / Ctrl+2 / Ctrl+3 — ширина строки: 68 / 80 / 106
 F1 — показать/скрыть эту справку
 
 Особенности:
-• Ошибочно набранный символ остаётся на бумаге
+• Ошибочно Набранный Символ Остаётся На Бумаге
 • Повторный удар по той же позиции перекрывает символ
 • Максимум 3 наложения на одну позицию
 "#;
@@ -432,15 +547,11 @@ impl<Message> canvas::Program<Message> for TypewriterCanvas {
                         state.type_char(' ', color);
                     }
 
-                    keyboard::Key::Named(
-                        keyboard::key::Named::ArrowLeft,
-                    ) => {
+                    keyboard::Key::Named(keyboard::key::Named::ArrowLeft) => {
                         state.move_left();
                     }
 
-                    keyboard::Key::Named(
-                        keyboard::key::Named::ArrowRight,
-                    ) => {
+                    keyboard::Key::Named(keyboard::key::Named::ArrowRight) => {
                         state.move_right();
                     }
 
@@ -449,9 +560,7 @@ impl<Message> canvas::Program<Message> for TypewriterCanvas {
                             if let Some(ch) = text.chars().next() {
                                 state.type_char(ch, color);
                             }
-                        } else if let keyboard::Key::Character(value) =
-                            key.as_ref()
-                        {
+                        } else if let keyboard::Key::Character(value) = key.as_ref() {
                             if let Some(ch) = value.chars().next() {
                                 state.type_char(ch, color);
                             }
@@ -504,7 +613,7 @@ impl<Message> canvas::Program<Message> for TypewriterCanvas {
             + status_char_h / 2.0;
 
         let status_top_left = canvas::Text {
-            content: "КОНСУЛ 254".to_string(),
+            content: "«CONSUL 254»".to_string(),
             position: Point::new(status_x, status_start_y),
             color: Color::from_rgb(0.3, 0.3, 0.3),
             size: status_font_size,
@@ -518,7 +627,7 @@ impl<Message> canvas::Program<Message> for TypewriterCanvas {
 
         let status_top_right = canvas::Text {
             content: format!(
-                "Режим: {} символов, интервал одинарный, цвет ленты {}",
+                "РЕЖИМ: {} СИМВОЛОВ, ИНТЕРВАЛ ОДИНАРНЫЙ, ЦВЕТ ЛЕНТЫ {}",
                 state.line_width_mode.label(),
                 state.tape_color_name()
             ),
@@ -767,19 +876,18 @@ fn subscription(_state: &()) -> Subscription<()> {
 }
 
 fn main() -> iced::Result {
-    //
-    // Первый аргумент после имени программы — путь к входному файлу.
-    //
     if let Some(path) = env::args_os().nth(1) {
         match fs::read_to_string(&path) {
             Ok(text) => {
-                let _ = INITIAL_INPUT.set(text);
+                let expanded_text = expand_file_commands(&text);
+                let _ = INITIAL_INPUT.set(expanded_text);
             }
 
             Err(error) => {
                 eprintln!(
                     "Не удалось прочитать входной файл {:?}: {}",
-                    path, error
+                    path,
+                    error
                 );
             }
         }
